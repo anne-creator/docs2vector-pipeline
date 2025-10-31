@@ -28,6 +28,8 @@ class SemanticChunker:
         self.chunk_size = chunk_size or Settings.CHUNK_SIZE
         self.chunk_overlap = chunk_overlap or Settings.CHUNK_OVERLAP
 
+        logger.debug(f"Initializing SemanticChunker (chunk_size={self.chunk_size}, overlap={self.chunk_overlap})")
+
         # Configure markdown header splitter
         self.headers_to_split_on = [
             ("#", "h1"),
@@ -45,6 +47,8 @@ class SemanticChunker:
             chunk_overlap=self.chunk_overlap,
             separators=["\n\n", "\n", ". ", ", ", " ", ""],
         )
+        
+        logger.debug("SemanticChunker initialized")
 
     def chunk_document(self, document: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -61,15 +65,19 @@ class SemanticChunker:
         markdown_content = document.get("markdown_content", "")
         metadata = document.get("metadata", {})
 
+        logger.debug(f"Chunking document: {title} ({len(markdown_content)} chars)")
+
         if not markdown_content:
-            logger.warning(f"No content to chunk for document: {title}")
+            logger.warning(f"⚠️  No content to chunk for document: {title}")
             return []
 
         try:
             # Step 1: Split by markdown headers
+            logger.debug("Step 1: Splitting by markdown headers...")
             header_chunks = self.markdown_splitter.split_text(markdown_content)
+            logger.debug(f"Created {len(header_chunks)} header-based chunks")
         except Exception as e:
-            logger.warning(f"Error splitting document {title} by headers: {e}, using fallback")
+            logger.warning(f"⚠️  Error splitting document {title} by headers: {e}, using fallback")
             # Fallback: treat as a single chunk
             header_chunks = [
                 {
@@ -79,6 +87,7 @@ class SemanticChunker:
             ]
 
         # Step 2: Further split large chunks by sentences/tokens
+        logger.debug("Step 2: Splitting large chunks by sentences/tokens...")
         final_chunks = []
         for i, header_chunk in enumerate(header_chunks):
             chunk_content = (
@@ -132,6 +141,7 @@ class SemanticChunker:
                     )
 
         # Add document-level metadata and generate chunk IDs
+        logger.debug(f"Step 3: Adding metadata and generating IDs for {len(final_chunks)} chunks...")
         for i, chunk in enumerate(final_chunks):
             # Generate chunk ID from URL and index
             url_part = url.split("/")[-1] if url else "unknown"
@@ -139,6 +149,7 @@ class SemanticChunker:
             chunk["metadata"]["chunk_id"] = chunk["id"]
             chunk["metadata"]["doc_id"] = url
 
+        logger.info(f"✅ Created {len(final_chunks)} chunks from {title[:40]}...")
         return final_chunks
 
     def process_documents(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -151,19 +162,18 @@ class SemanticChunker:
         Returns:
             List of all chunks from all documents
         """
+        logger.info(f"Processing {len(documents)} documents into chunks...")
         all_chunks = []
 
-        for document in documents:
+        for idx, document in enumerate(documents):
             try:
+                logger.debug(f"Processing document {idx + 1}/{len(documents)}: {document.get('title', 'Unknown')[:40]}...")
                 document_chunks = self.chunk_document(document)
                 all_chunks.extend(document_chunks)
-                logger.debug(
-                    f"Chunked document {document.get('title', 'Unknown')} into {len(document_chunks)} chunks"
-                )
             except Exception as e:
-                logger.error(f"Error chunking document {document.get('url', 'Unknown')}: {e}")
+                logger.error(f"❌ Error chunking document {document.get('url', 'Unknown')}: {e}")
                 raise ProcessorError(f"Failed to chunk document: {e}") from e
 
-        logger.info(f"Created {len(all_chunks)} total chunks from {len(documents)} documents")
+        logger.info(f"✅ Created {len(all_chunks)} total chunks from {len(documents)} documents")
         return all_chunks
 

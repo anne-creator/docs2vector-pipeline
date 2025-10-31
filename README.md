@@ -209,7 +209,6 @@ pytest --cov=src --cov-report=html tests/unit/
 Run tests with specific markers:
 ```bash
 pytest -m unit          # Run only unit tests
-pytest -m integration   # Run only integration tests
 pytest -m "not slow"    # Skip slow tests
 ```
 

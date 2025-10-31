@@ -11,7 +11,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Test data directory - stores data locally in scripts/.test_data/
-TEST_DATA_DIR = Path(__file__).parent / ".test_data"
+TEST_DATA_DIR = Path(__file__).parent.parent / "tests" / ".test_data"
 
 from src.scraper.spider import AmazonSellerHelpSpider
 from config.settings import Settings

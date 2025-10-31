@@ -2,56 +2,109 @@ version: 1
 disable_existing_loggers: false
 
 formatters:
-  standard:
-    format: '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
-    datefmt: '%Y-%m-%d %H:%M:%S'
+  # Simple format for console (high-level overview)
+  console_format:
+    format: '%(asctime)s [%(levelname)s] %(message)s'
+    datefmt: '%H:%M:%S'
   
-  detailed:
+  # Detailed format for files (debugging)
+  file_format:
     format: '%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s'
     datefmt: '%Y-%m-%d %H:%M:%S'
 
 handlers:
+  # Console shows high-level stage progress only
   console:
     class: logging.StreamHandler
     level: INFO
-    formatter: standard
+    formatter: console_format
     stream: ext://sys.stdout
   
-  file:
+  # Master log file (everything combined)
+  master_file:
     class: logging.handlers.RotatingFileHandler
     level: DEBUG
-    formatter: detailed
+    formatter: file_format
     filename: logs/pipeline.log
-    maxBytes: 10485760
+    maxBytes: 10485760  # 10MB
     backupCount: 5
+  
+  # Component-specific log files
+  scraper_file:
+    class: logging.handlers.RotatingFileHandler
+    level: DEBUG
+    formatter: file_format
+    filename: logs/scraper.log
+    maxBytes: 5242880  # 5MB
+    backupCount: 3
+  
+  processor_file:
+    class: logging.handlers.RotatingFileHandler
+    level: DEBUG
+    formatter: file_format
+    filename: logs/processor.log
+    maxBytes: 5242880
+    backupCount: 3
+  
+  chunker_file:
+    class: logging.handlers.RotatingFileHandler
+    level: DEBUG
+    formatter: file_format
+    filename: logs/chunker.log
+    maxBytes: 5242880
+    backupCount: 3
+  
+  embeddings_file:
+    class: logging.handlers.RotatingFileHandler
+    level: DEBUG
+    formatter: file_format
+    filename: logs/embeddings.log
+    maxBytes: 5242880
+    backupCount: 3
+  
+  storage_file:
+    class: logging.handlers.RotatingFileHandler
+    level: DEBUG
+    formatter: file_format
+    filename: logs/storage.log
+    maxBytes: 5242880
+    backupCount: 3
 
 loggers:
-  pipeline:
+  # Pipeline orchestrator (high-level stages shown in console)
+  src.pipeline:
+    level: INFO
+    handlers: [console, master_file]
+    propagate: false
+  
+  # Component loggers (detailed logs to their own files + master)
+  src.scraper:
     level: DEBUG
-    handlers: [console, file]
+    handlers: [scraper_file, master_file]
     propagate: false
   
-  scraper:
-    level: INFO
-    handlers: [console, file]
-    propagate: false
-  
-  processor:
+  src.processor.preprocessor:
     level: DEBUG
-    handlers: [console, file]
+    handlers: [processor_file, master_file]
     propagate: false
   
-  embeddings:
-    level: INFO
-    handlers: [console, file]
+  src.processor.chunker:
+    level: DEBUG
+    handlers: [chunker_file, master_file]
     propagate: false
   
-  storage:
-    level: INFO
-    handlers: [console, file]
+  src.embeddings:
+    level: DEBUG
+    handlers: [embeddings_file, master_file]
+    propagate: false
+  
+  src.storage:
+    level: DEBUG
+    handlers: [storage_file, master_file]
     propagate: false
 
+# Catch-all for other loggers
 root:
-  level: INFO
-  handlers: [console]
+  level: WARNING
+  handlers: [console, master_file]
 

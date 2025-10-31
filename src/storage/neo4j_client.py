@@ -35,35 +35,40 @@ class Neo4jClient:
         self.password = password or Settings.NEO4J_PASSWORD
         self.database = database or Settings.NEO4J_DATABASE
 
+        logger.debug(f"Initializing Neo4j client (URI: {self.uri}, Database: {self.database})")
         try:
             self.driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
-            logger.info(f"Connected to Neo4j at {self.uri}")
+            logger.info(f"✅ Connected to Neo4j at {self.uri}")
         except Exception as e:
-            logger.error(f"Failed to connect to Neo4j: {e}")
+            logger.error(f"❌ Failed to connect to Neo4j: {e}")
             raise StorageError(f"Failed to connect to Neo4j: {e}") from e
 
     def close(self) -> None:
         """Close the Neo4j driver connection."""
         if hasattr(self, "driver"):
+            logger.debug("Closing Neo4j connection...")
             self.driver.close()
-            logger.info("Neo4j connection closed")
+            logger.info("✅ Neo4j connection closed")
 
     def initialize_schema(self) -> None:
         """Initialize database schema with constraints and indexes."""
+        logger.debug("Initializing database schema...")
         with self.driver.session(database=self.database) as session:
             try:
                 # Create constraints for unique IDs
+                logger.debug("Creating constraint: document_url")
                 session.run(
                     "CREATE CONSTRAINT document_url IF NOT EXISTS FOR (d:Document) REQUIRE d.url IS UNIQUE"
                 )
+                logger.debug("Creating constraint: chunk_id")
                 session.run(
                     "CREATE CONSTRAINT chunk_id IF NOT EXISTS FOR (c:Chunk) REQUIRE c.id IS UNIQUE"
                 )
 
-                logger.info("Database schema initialized")
+                logger.info("✅ Database schema initialized")
             except Exception as e:
                 # Some constraints might already exist
-                logger.warning(f"Schema initialization warning: {e}")
+                logger.warning(f"⚠️  Schema initialization warning: {e}")
 
     def create_vector_index(self, dimension: int = 384, similarity_function: str = "cosine") -> None:
         """
@@ -73,6 +78,7 @@ class Neo4jClient:
             dimension: Embedding dimension
             similarity_function: Similarity function (cosine, euclidean)
         """
+        logger.debug(f"Creating vector index (dimension={dimension}, similarity={similarity_function})...")
         with self.driver.session(database=self.database) as session:
             try:
                 # This requires Neo4j 5.0+ with vector index support
@@ -88,9 +94,9 @@ class Neo4jClient:
                 }}
                 """
                 session.run(query)
-                logger.info(f"Vector index created with dimension {dimension}")
+                logger.info(f"✅ Vector index created with dimension {dimension}")
             except Exception as e:
-                logger.warning(f"Vector index creation failed (may require Neo4j 5.0+): {e}")
+                logger.warning(f"⚠️  Vector index creation failed (may require Neo4j 5.0+): {e}")
 
     def upsert_document(self, url: str, title: str) -> None:
         """
@@ -160,10 +166,14 @@ class Neo4jClient:
             chunks: List of chunk dictionaries with required fields
             batch_size: Number of chunks to process per batch
         """
-        logger.info(f"Batch upserting {len(chunks)} chunks in batches of {batch_size}")
+        logger.info(f"Batch upserting {len(chunks)} chunks in batches of {batch_size}...")
+        total_batches = (len(chunks) + batch_size - 1) // batch_size
+        logger.debug(f"Will process {total_batches} batches")
 
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i : i + batch_size]
+            batch_num = i // batch_size + 1
+            logger.debug(f"Processing batch {batch_num}/{total_batches} ({len(batch)} chunks)...")
             with self.driver.session(database=self.database) as session:
                 tx = session.begin_transaction()
                 try:
@@ -182,11 +192,13 @@ class Neo4jClient:
                             chunk_index=chunk["metadata"].get("chunk_index", 0),
                         )
                     tx.commit()
-                    logger.info(f"Processed batch {i // batch_size + 1}: {len(batch)} chunks")
+                    logger.info(f"✓ Processed batch {batch_num}/{total_batches}: {len(batch)} chunks")
                 except Exception as e:
                     tx.rollback()
-                    logger.error(f"Error processing batch: {e}")
+                    logger.error(f"❌ Error processing batch {batch_num}: {e}")
                     raise StorageError(f"Failed to batch upsert chunks: {e}") from e
+        
+        logger.info(f"✅ Successfully upserted {len(chunks)} chunks to Neo4j")
 
     def query_chunks(self, query_text: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """

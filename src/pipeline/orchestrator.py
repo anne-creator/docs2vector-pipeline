@@ -188,7 +188,9 @@ class PipelineOrchestrator:
         Returns:
             Dictionary with execution results
         """
-        logger.info("Starting full pipeline execution...")
+        logger.info("=" * 70)
+        logger.info("🚀 STARTING FULL PIPELINE")
+        logger.info("=" * 70)
 
         results = {
             "raw_data_file": None,
@@ -201,31 +203,85 @@ class PipelineOrchestrator:
 
         try:
             # Stage 1: Scrape
-            raw_data_file = self.run_scraper()
-            results["raw_data_file"] = str(raw_data_file)
+            logger.info("")
+            logger.info("📡 STAGE 1/5: SCRAPING")
+            logger.info("-" * 70)
+            try:
+                raw_data_file = self.run_scraper()
+                results["raw_data_file"] = str(raw_data_file)
+                logger.info(f"✅ Scraper completed successfully")
+            except Exception as e:
+                logger.error(f"❌ Scraping failed: {e}")
+                results["error"] = str(e)
+                results["stage"] = "scraper"
+                return results
 
             # Stage 2: Process
-            processed_docs = self.process_documents(raw_data_file)
-            results["documents_processed"] = len(processed_docs)
+            logger.info("")
+            logger.info("⚙️  STAGE 2/5: PROCESSING")
+            logger.info("-" * 70)
+            try:
+                processed_docs = self.process_documents(raw_data_file)
+                results["documents_processed"] = len(processed_docs)
+                logger.info(f"✅ Processor completed: {len(processed_docs)} documents")
+            except Exception as e:
+                logger.error(f"❌ Processing failed: {e}")
+                results["error"] = str(e)
+                results["stage"] = "processor"
+                return results
 
             # Stage 3: Chunk
-            chunks = self.chunk_documents(processed_docs)
-            results["chunks_created"] = len(chunks)
+            logger.info("")
+            logger.info("✂️  STAGE 3/5: CHUNKING")
+            logger.info("-" * 70)
+            try:
+                chunks = self.chunk_documents(processed_docs)
+                results["chunks_created"] = len(chunks)
+                logger.info(f"✅ Chunker completed: {len(chunks)} chunks")
+            except Exception as e:
+                logger.error(f"❌ Chunking failed: {e}")
+                results["error"] = str(e)
+                results["stage"] = "chunker"
+                return results
 
             # Stage 4: Generate embeddings
-            chunks_with_embeddings = self.generate_embeddings(chunks)
-            results["embeddings_generated"] = len(chunks_with_embeddings)
+            logger.info("")
+            logger.info("🧠 STAGE 4/5: GENERATING EMBEDDINGS")
+            logger.info("-" * 70)
+            try:
+                chunks_with_embeddings = self.generate_embeddings(chunks)
+                results["embeddings_generated"] = len(chunks_with_embeddings)
+                logger.info(f"✅ Embeddings completed: {len(chunks_with_embeddings)} vectors")
+            except Exception as e:
+                logger.error(f"❌ Embedding generation failed: {e}")
+                results["error"] = str(e)
+                results["stage"] = "embeddings"
+                return results
 
             # Stage 5: Load to Neo4j
-            self.load_to_neo4j(chunks_with_embeddings)
-            results["chunks_loaded"] = len(chunks_with_embeddings)
+            logger.info("")
+            logger.info("💾 STAGE 5/5: LOADING TO NEO4J")
+            logger.info("-" * 70)
+            try:
+                self.load_to_neo4j(chunks_with_embeddings)
+                results["chunks_loaded"] = len(chunks_with_embeddings)
+                logger.info(f"✅ Storage completed: {len(chunks_with_embeddings)} chunks loaded")
+            except Exception as e:
+                logger.error(f"❌ Storage failed: {e}")
+                results["error"] = str(e)
+                results["stage"] = "storage"
+                return results
 
             results["success"] = True
 
-            logger.info("Pipeline execution completed successfully")
+            logger.info("")
+            logger.info("=" * 70)
+            logger.info("🎉 PIPELINE COMPLETED SUCCESSFULLY")
+            logger.info("=" * 70)
         except Exception as e:
-            logger.error(f"Pipeline execution failed: {e}")
+            logger.exception(f"❌ PIPELINE FAILED: {e}")
             results["error"] = str(e)
+            results["stage"] = "unknown"
 
         finally:
             if self.neo4j_client:

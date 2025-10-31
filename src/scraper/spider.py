@@ -80,12 +80,14 @@ class AmazonSellerHelpSpider(CrawlSpider):
         """Initialize spider with version manager for change detection."""
         super().__init__(*args, **kwargs)
         self.version_manager = VersionManager()
+        logger.info("🕷️  Spider initialized with Playwright support")
     
     def _requests_to_follow(self, response):
         """Override to add Playwright to all followed requests."""
         # Get requests from parent CrawlSpider
         for request_or_item in super()._requests_to_follow(response):
             if isinstance(request_or_item, scrapy.Request):
+                logger.debug(f"Following link with Playwright: {request_or_item.url}")
                 # Add Playwright meta to all requests
                 request_or_item.meta.update({
                     "playwright": True,
@@ -99,7 +101,9 @@ class AmazonSellerHelpSpider(CrawlSpider):
 
     def start_requests(self):
         """Generate start requests with Playwright enabled."""
+        logger.info(f"Starting crawl from {len(self.start_urls)} URL(s)")
         for url in self.start_urls:
+            logger.debug(f"Requesting start URL: {url}")
             yield scrapy.Request(
                 url=url,
                 meta={
@@ -119,6 +123,8 @@ class AmazonSellerHelpSpider(CrawlSpider):
 
     def parse_help_page(self, response):
         """Parse article pages with change detection."""
+        logger.debug(f"📄 Parsing page: {response.url}")
+        
         # Extract the main title
         title = (
             response.css("h1::text").get()
@@ -128,6 +134,9 @@ class AmazonSellerHelpSpider(CrawlSpider):
 
         if not title:
             title = "Untitled"
+            logger.warning(f"No title found for {response.url}")
+        else:
+            logger.debug(f"Title: {title[:60]}...")
 
         # Extract raw HTML content for later processing
         # Try multiple container selectors
@@ -171,8 +180,11 @@ class AmazonSellerHelpSpider(CrawlSpider):
         content_text = " ".join(content_parts).strip()
         content_text = " ".join(content_text.split())  # Normalize whitespace
         
+        logger.debug(f"Extracted {len(content_text)} chars of content")
+        
         # Fallback: if no content found, use title as minimal content
         if not content_text or len(content_text) < 10:
+            logger.warning(f"Very short content on {response.url}: {len(content_text)} chars")
             content_text = title.strip() if title else "No content available"
 
         # Extract breadcrumbs for categorization
@@ -211,6 +223,8 @@ class AmazonSellerHelpSpider(CrawlSpider):
         # Check for changes using content hash
         content_hash = generate_hash(content_text)
         change_status = self.version_manager.detect_change(response.url, content_hash)
+        
+        logger.info(f"Page processed: {change_status} | Hash: {content_hash[:8]}... | {len(content_text)} chars")
 
         metadata.update(
             {
@@ -221,6 +235,8 @@ class AmazonSellerHelpSpider(CrawlSpider):
 
         # Update hash in version manager
         self.version_manager.set_hash(response.url, content_hash, save=False)
+        
+        logger.debug(f"Yielding item: {title[:50]}...")
 
         yield {
             "url": response.url,
@@ -246,5 +262,5 @@ class AmazonSellerHelpSpider(CrawlSpider):
     def closed(self, reason):
         """Called when spider closes - save all hashes."""
         self.version_manager.save()
-        logger.info(f"Spider closed: {reason}. Hashes saved.")
+        logger.info(f"✅ Spider finished: {reason}. Hashes saved.")
 

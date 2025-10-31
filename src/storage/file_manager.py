@@ -23,6 +23,7 @@ class FileManager:
             base_dir: Base directory for data storage (defaults to Settings.DATA_DIR)
         """
         self.base_dir = base_dir or Settings.DATA_DIR
+        logger.debug(f"FileManager initialized (base_dir: {self.base_dir})")
         self.ensure_directories()
 
     def ensure_directories(self) -> None:
@@ -52,12 +53,13 @@ class FileManager:
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
+            logger.debug(f"Saving {len(data)} items to {file_path}...")
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            logger.info(f"Saved {len(data)} items to {file_path}")
+            logger.info(f"✅ Saved {len(data)} items to {file_path}")
             return file_path
         except Exception as e:
-            logger.error(f"Error saving raw data: {e}")
+            logger.error(f"❌ Error saving raw data: {e}")
             raise StorageError(f"Failed to save raw data: {e}") from e
 
     def load_raw_data(self, filename: str) -> List[Dict[str, Any]]:
@@ -75,12 +77,13 @@ class FileManager:
             raise StorageError(f"Raw data file not found: {file_path}")
 
         try:
+            logger.debug(f"Loading raw data from {file_path}...")
             with open(file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            logger.info(f"Loaded {len(data)} items from {file_path}")
+            logger.info(f"✅ Loaded {len(data)} items from {file_path}")
             return data
         except Exception as e:
-            logger.error(f"Error loading raw data: {e}")
+            logger.error(f"❌ Error loading raw data: {e}")
             raise StorageError(f"Failed to load raw data: {e}") from e
 
     def save_processed_documents(

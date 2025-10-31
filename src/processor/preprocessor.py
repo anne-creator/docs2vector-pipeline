@@ -29,6 +29,7 @@ class Preprocessor:
             ".header-menu",
             ".cookie-banner",
         ]
+        logger.debug("Preprocessor initialized")
 
     def clean_html(self, html_content: str) -> str:
         """
@@ -41,19 +42,24 @@ class Preprocessor:
             Cleaned HTML string
         """
         if not html_content:
+            logger.debug("Empty HTML content provided")
             return ""
 
         try:
+            logger.debug(f"Cleaning HTML ({len(html_content)} chars)...")
             soup = BeautifulSoup(html_content, "html.parser")
 
             # Remove boilerplate elements
+            removed_count = 0
             for selector in self.boilerplate_selectors:
                 for element in soup.select(selector):
                     element.decompose()
+                    removed_count += 1
 
+            logger.debug(f"Removed {removed_count} boilerplate elements")
             return str(soup)
         except Exception as e:
-            logger.error(f"Error cleaning HTML: {e}")
+            logger.error(f"❌ Error cleaning HTML: {e}")
             raise ProcessorError(f"Failed to clean HTML: {e}") from e
 
     def html_to_markdown(self, html_content: Optional[str]) -> str:
@@ -67,9 +73,11 @@ class Preprocessor:
             Markdown string
         """
         if not html_content:
+            logger.debug("Empty HTML content provided for markdown conversion")
             return ""
 
         try:
+            logger.debug("Converting HTML to Markdown...")
             # Clean the HTML first
             clean_html = self.clean_html(html_content)
 
@@ -87,9 +95,10 @@ class Preprocessor:
             # Normalize whitespace
             markdown = sanitize_text(markdown)
 
+            logger.debug(f"Generated {len(markdown)} chars of Markdown")
             return markdown
         except Exception as e:
-            logger.error(f"Error converting HTML to Markdown: {e}")
+            logger.error(f"❌ Error converting HTML to Markdown: {e}")
             raise ProcessorError(f"Failed to convert HTML to Markdown: {e}") from e
 
     def process(self, html_content: Optional[str], text_content: Optional[str] = None) -> str:
@@ -104,10 +113,16 @@ class Preprocessor:
             Processed Markdown content
         """
         if html_content:
-            return self.html_to_markdown(html_content)
+            logger.debug("Processing HTML content")
+            result = self.html_to_markdown(html_content)
+            logger.info(f"✅ Processed HTML to Markdown: {len(result)} chars")
+            return result
         elif text_content:
-            return sanitize_text(text_content)
+            logger.debug("Processing text content (no HTML available)")
+            result = sanitize_text(text_content)
+            logger.info(f"✅ Processed text content: {len(result)} chars")
+            return result
         else:
-            logger.warning("No content provided for processing")
+            logger.warning("⚠️  No content provided for processing")
             return ""
 

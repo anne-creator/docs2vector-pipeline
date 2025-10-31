@@ -1,0 +1,24 @@
+# Core dependencies
+scrapy>=2.11.0
+itemadapter>=0.8.0
+scrapy-playwright>=0.0.34
+sentence-transformers>=2.2.2
+neo4j>=5.15.0
+markdownify>=0.11.6
+beautifulsoup4>=4.12.2
+python-dotenv>=1.0.0
+langchain>=0.1.0
+
+# Utilities
+pyyaml>=6.0.1
+tqdm>=4.66.0
+
+# Testing
+pytest>=7.4.3
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+
+# Development
+black>=23.12.0
+flake8>=6.1.0
+

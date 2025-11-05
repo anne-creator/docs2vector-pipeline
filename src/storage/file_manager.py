@@ -28,7 +28,7 @@ class FileManager:
 
     def ensure_directories(self) -> None:
         """Ensure all required data directories exist."""
-        directories = ["raw", "processed", "chunks", "embeddings", "hashes", "manifests"]
+        directories = ["raw", "processed", "chunks", "embeddings", "hashes", "manifests", "csv_export"]
         for directory in directories:
             dir_path = self.base_dir / directory
             dir_path.mkdir(parents=True, exist_ok=True)

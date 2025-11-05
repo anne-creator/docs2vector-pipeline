@@ -41,6 +41,12 @@ def main():
         help="Pipeline execution mode (default: auto)",
     )
     parser.add_argument(
+        "--storage",
+        choices=["local", "s3", "auto"],
+        default=None,
+        help="Storage mode: 'local' (data/ only), 's3' (AWS S3), 'auto' (S3 if configured, else local). Defaults to STORAGE_MODE from .env",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="Only check if update is needed, don't run pipeline",
@@ -83,7 +89,7 @@ def main():
             mode = args.mode
 
         # Run pipeline
-        orchestrator = PipelineOrchestrator()
+        orchestrator = PipelineOrchestrator(storage_mode=args.storage)
 
         if mode == "full":
             logger.info("Starting full pipeline execution...")
@@ -97,10 +103,12 @@ def main():
 
         if results.get("success"):
             logger.info("Pipeline completed successfully")
+            logger.info(f"  Storage mode: {results.get('storage_mode', 'unknown')}")
             logger.info(f"  Documents processed: {results.get('documents_processed', 0)}")
             logger.info(f"  Chunks created: {results.get('chunks_created', 0)}")
             logger.info(f"  Embeddings generated: {results.get('embeddings_generated', 0)}")
-            logger.info(f"  Chunks loaded to Neo4j: {results.get('chunks_loaded', 0)}")
+            if results.get('chunks_loaded', 0) > 0:
+                logger.info(f"  Chunks loaded to Neo4j: {results.get('chunks_loaded', 0)}")
             sys.exit(0)
         else:
             logger.error(f"Pipeline failed: {results.get('error', 'Unknown error')}")

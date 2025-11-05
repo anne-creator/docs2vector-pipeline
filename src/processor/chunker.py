@@ -4,7 +4,7 @@ import logging
 import re
 from typing import List, Dict, Any, Optional
 
-from langchain.text_splitter import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 from ..utils.exceptions import ProcessorError
 from config.settings import Settings
@@ -49,6 +49,35 @@ class SemanticChunker:
         )
         
         logger.debug("SemanticChunker initialized")
+
+    def _extract_chunk_title(self, chunk_metadata: Dict[str, Any], document_title: str) -> str:
+        """
+        Extract a descriptive title for a chunk from its header hierarchy.
+        
+        Args:
+            chunk_metadata: Metadata from the markdown splitter containing headers
+            document_title: The parent document's title (fallback)
+            
+        Returns:
+            A descriptive title for the chunk
+        """
+        # Check for headers in order of specificity (h4 -> h3 -> h2 -> h1)
+        header_hierarchy = []
+        for level in ["h1", "h2", "h3", "h4"]:
+            if level in chunk_metadata and chunk_metadata[level]:
+                header_hierarchy.append(chunk_metadata[level])
+        
+        if header_hierarchy:
+            # Use the most specific header (last in hierarchy)
+            # Or combine headers for context: "Parent Section > Child Section"
+            if len(header_hierarchy) == 1:
+                return header_hierarchy[0]
+            else:
+                # Combine last two levels for context
+                return f"{header_hierarchy[-2]} > {header_hierarchy[-1]}"
+        
+        # Fallback to document title if no headers found
+        return document_title
 
     def chunk_document(self, document: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -105,6 +134,9 @@ class SemanticChunker:
             if not chunk_content.strip():
                 continue
 
+            # Extract chunk title from headers
+            chunk_title = self._extract_chunk_title(chunk_metadata, title)
+            
             # If chunk is small enough, keep as is
             if len(chunk_content) <= self.chunk_size:
                 final_chunks.append(
@@ -114,6 +146,7 @@ class SemanticChunker:
                             **chunk_metadata,
                             **metadata,
                             "chunk_index": len(final_chunks),
+                            "chunk_title": chunk_title,
                         },
                     }
                 )
@@ -128,6 +161,8 @@ class SemanticChunker:
 
             for j, sentence_chunk in enumerate(sentence_chunks):
                 if sentence_chunk.strip():
+                    # For sub-chunks, append part number to title
+                    sub_chunk_title = f"{chunk_title} (Part {j + 1})" if len(sentence_chunks) > 1 else chunk_title
                     final_chunks.append(
                         {
                             "content": sentence_chunk,
@@ -136,6 +171,7 @@ class SemanticChunker:
                                 **metadata,
                                 "chunk_index": len(final_chunks),
                                 "sub_chunk_index": j,
+                                "chunk_title": sub_chunk_title,
                             },
                         }
                     )

@@ -40,25 +40,26 @@ This pipeline implements a complete workflow for:
 The pipeline follows a modular architecture with clear separation of concerns:
 
 ```
-┌─────────────┐
-│   Scraper   │ → Raw HTML/Text data
-└─────────────┘
-       ↓
-┌─────────────┐
-│  Processor  │ → Cleaned Markdown + Metadata
-└─────────────┘
-       ↓
-┌─────────────┐
-│  Chunker    │ → Semantic chunks with overlap
-└─────────────┘
-       ↓
-┌─────────────┐
-│ Embeddings  │ → Vector embeddings for chunks
-└─────────────┘
-       ↓
-┌─────────────┐
-│   Storage   │ → Neo4j Aura + Local files
-└─────────────┘
+┌──────────────────┐
+│   1. Scraper     │ → output: Raw HTML/Text data
+└──────────────────┘
+         ↓
+┌──────────────────┐
+│   2. Processor   │ → output: HTML cleaning, Markdown conversion
+└──────────────────┘
+         ↓
+┌──────────────────┐
+│ 3. Semantic      │ → output: Intelligently segmented chunks + Metadata
+│    Chunking      │
+└──────────────────┘
+         ↓
+┌──────────────────┐
+│ 4. Embeddings    │ → output: Vector embeddings for chunks
+└──────────────────┘
+         ↓
+┌──────────────────┐
+│   5. Storage     │ → Neo4j Aura + Local files
+└──────────────────┘
 ```
 
 > **Note**: While the diagram shows sequential stages, the actual execution is **concurrent and asynchronous**. See [Concurrent Processing Model](#concurrent-processing-model) for detailed explanation.
@@ -66,11 +67,32 @@ The pipeline follows a modular architecture with clear separation of concerns:
 ### Core Modules
 
 - **`src/scraper/`**: Enhanced Scrapy spider with change detection
-- **`src/processor/`**: HTML cleaning, Markdown conversion, semantic chunking
+- **`src/processor/`**: HTML cleaning and Markdown conversion
+- **`src/processor/chunker.py`**: Semantic chunking with intelligent text segmentation and automatic chunk title generation
 - **`src/embeddings/`**: Vector embedding generation using sentence-transformers
 - **`src/storage/`**: Local file management and Neo4j Aura integration
 - **`src/pipeline/`**: Orchestration and scheduling logic
 - **`src/utils/`**: Shared utilities (hashing, validation, exceptions)
+
+### Semantic Chunking Features
+
+The chunking system provides intelligent text segmentation with the following features:
+
+**Automatic Chunk Title Generation** ✨
+- Extracts descriptive titles from markdown header hierarchy
+- Combines parent and child headers for context (e.g., "Payment > Bank Details")
+- Falls back to document title when no headers are available
+- Adds part numbers to sub-chunks (e.g., "Section (Part 1)")
+
+**Example:**
+```
+Document: "Account Settings"
+  Chunk 1: "Account Settings > Payment Information"
+  Chunk 2: "Payment Information > Bank Account Details"
+  Chunk 3: "Payment Information > Credit Card Information"
+```
+
+This improves RAG retrieval by providing both document-level and chunk-level context.
 
 ## Prerequisites
 
@@ -151,14 +173,35 @@ scrapy crawl amazon_seller_help
 ### Configuration
 
 Configuration is managed through:
-- **Environment variables** (`.env` file)
+- **Environment variables** (`.env` file) - see `env.example` for template
 - **`config/settings.py`** for defaults and validation
 
-Key configuration options:
+#### Embedding Configuration
+
+The pipeline supports **three embedding providers**:
+- **Sentence Transformers** (local, default) - No API key needed
+- **Ollama** (local server) - No API key needed
+- **OpenAI-Compatible APIs** (cloud) - API key required
+
+**Quick Setup**:
+```bash
+# Copy the example configuration
+cp env.example .env
+
+# Edit .env to set your provider (default is sentence-transformers)
+EMBEDDING_PROVIDER=sentence-transformers
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+```
+
+📖 **See [docs/EMBEDDING_CONFIGURATION.md](docs/EMBEDDING_CONFIGURATION.md) for detailed setup guide**
+
+#### Key Configuration Options
+
+- `EMBEDDING_PROVIDER`: Provider to use (default: sentence-transformers)
+- `EMBEDDING_MODEL`: Model name (default: BAAI/bge-small-en-v1.5)
+- `EMBEDDING_BATCH_SIZE`: Batch size for embedding generation (default: 32)
 - `CHUNK_SIZE`: Maximum chunk size in characters (default: 512)
 - `CHUNK_OVERLAP`: Overlap between chunks (default: 64)
-- `EMBEDDING_MODEL`: Embedding model name (default: all-MiniLM-L6-v2)
-- `EMBEDDING_BATCH_SIZE`: Batch size for embedding generation (default: 32)
 - `SCRAPER_DOWNLOAD_DELAY`: Delay between requests in seconds (default: 1.0)
 - `SCRAPER_CONCURRENT_REQUESTS`: Number of concurrent requests (default: 2)
 
@@ -181,9 +224,49 @@ data/
 └── manifests/       # Update manifests
 ```
 
+### Chunk Metadata Structure
+
+Each chunk includes rich metadata for improved retrieval:
+
+```json
+{
+  "id": "G2?locale=en-US_1",
+  "content": "...",
+  "metadata": {
+    "source_url": "https://...",
+    "document_title": "Help for Amazon Sellers",
+    "chunk_title": "Payment Information > Bank Details",
+    "chunk_index": 1,
+    "sub_chunk_index": 0,
+    "chunk_id": "G2?locale=en-US_1",
+    "doc_id": "https://...",
+    "h1": "Account Settings",
+    "h2": "Payment Information",
+    "h3": "Bank Details",
+    "last_updated": "",
+    "breadcrumbs": [],
+    "related_links": [...],
+    "category": [],
+    "article_id": "2",
+    "locale": "en-US",
+    "page_hash": "...",
+    "change_status": "new"
+  }
+}
+```
+
+**Key Metadata Fields:**
+- `document_title`: Parent document's title
+- `chunk_title`: Descriptive title for this specific chunk (extracted from headers)
+- `h1`, `h2`, `h3`, `h4`: Markdown header hierarchy for context
+- `chunk_index`: Position within document
+- `sub_chunk_index`: Position within split section (if applicable)
+
+### Neo4j Storage
+
 Final processed data is loaded into Neo4j Aura with:
 - **Document nodes** with URL, title, and metadata
-- **Chunk nodes** with content, embeddings, and indexing
+- **Chunk nodes** with content, chunk_title, embeddings, and full metadata
 - **Relationships** between documents and chunks
 - **Vector index** for semantic similarity search
 
@@ -488,32 +571,334 @@ Watch for these indicators in logs:
 - Integration testing suite
 - Performance benchmarking
 
-## Troubleshooting
+## Running BGE-small-en-v1.5 Locally
 
-### Neo4j Connection Issues
-- Verify `NEO4J_URI`, `NEO4J_USERNAME`, and `NEO4J_PASSWORD` in `.env`
-- Check network connectivity to Neo4j Aura
-- Verify database name matches
+This guide explains how to run the BGE-small-en-v1.5 embedding model locally using two approaches:
+1. **Sentence Transformers** (Direct, Recommended)
+2. **Ollama** (Alternative, if you prefer Ollama server)
 
-### Scraper Not Working
-- Check robots.txt compliance
-- Verify start URLs are accessible
-- Review Scrapy logs in console output
+### Option 1: Using Sentence Transformers (Recommended) ⭐
 
-### Embedding Generation Slow
-- Reduce `EMBEDDING_BATCH_SIZE` if memory constrained
-- Consider using GPU acceleration
-- Process in smaller batches
+This is the **simplest and recommended** approach for BGE-small-en-v1.5.
 
-## License
+#### Setup
 
-[Add your license information here]
+1. **Configure Environment**:
+   ```bash
+   # Create or edit .env file
+   cat > .env << 'EOF'
+   EMBEDDING_PROVIDER=sentence-transformers
+   EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+   EMBEDDING_BATCH_SIZE=32
+   
+   # ... other settings
+   EOF
+   ```
 
-## Contributing
+2. **First Run** (automatic model download):
+   ```bash
+   # The model will be automatically downloaded on first use (~130MB)
+   python scripts/run_pipeline.py
+   ```
 
-[Add contribution guidelines here]
+3. **Pre-download Model** (optional):
+   ```bash
+   python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')"
+   ```
 
-## Support
+#### Specifications
+- **Embedding Dimension**: 384
+- **Max Tokens**: 512
+- **Model Size**: ~130MB
+- **Memory Usage**: ~500MB-1GB during inference
+- **Speed**: Fast (optimized for CPU and GPU)
 
-[Add support contact information here]
+#### Advantages
+✅ No additional server needed  
+✅ Works offline after initial download  
+✅ Lower memory footprint  
+✅ Direct Python integration  
+✅ Best for development and testing  
+
+---
+
+### Option 2: Using Ollama (Alternative)
+
+If you prefer using Ollama server or need to run multiple models, follow this guide.
+
+⚠️ **Note**: Ollama doesn't have the exact `BAAI/bge-small-en-v1.5` model. The closest alternative is `nomic-embed-text` (768-dim).
+
+#### Prerequisites Check
+
+Before installing, check if Ollama is already installed:
+
+```bash
+# Check if Ollama is installed
+which ollama
+
+# If installed, check version
+ollama --version
+
+# Check if Ollama service is running
+curl http://localhost:11434/api/tags 2>/dev/null && echo "✅ Ollama is running" || echo "❌ Ollama not running"
+```
+
+#### Install Ollama
+
+**On macOS**:
+```bash
+# Method 1: Using Homebrew (recommended)
+brew install ollama
+
+# Method 2: Official installer
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Verify installation
+ollama --version
+```
+
+**On Linux**:
+```bash
+# Official installer
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Verify installation
+ollama --version
+```
+
+**On Windows**:
+1. Download installer from https://ollama.ai/download
+2. Run the installer
+3. Verify in PowerShell: `ollama --version`
+
+#### Setup Ollama Embedding Model
+
+**Terminal 1: Start Ollama Server**
+```bash
+# Start Ollama server (keep this terminal open)
+ollama serve
+```
+
+**Terminal 2: Pull Embedding Model**
+```bash
+# Pull the nomic-embed-text model (closest to BGE-small)
+ollama pull nomic-embed-text
+
+# Alternative: mxbai-embed-large (higher quality, larger)
+# ollama pull mxbai-embed-large
+
+# List all downloaded models
+ollama list
+```
+
+#### Test the Model
+
+```bash
+# Test embedding generation
+curl http://localhost:11434/api/embeddings -d '{
+  "model": "nomic-embed-text",
+  "prompt": "This is a test embedding"
+}'
+
+# Expected output: JSON with "embedding" array
+```
+
+#### Configure Pipeline for Ollama
+
+```bash
+# Create or edit .env file
+cat > .env << 'EOF'
+EMBEDDING_PROVIDER=ollama
+EMBEDDING_MODEL=nomic-embed-text
+OLLAMA_BASE_URL=http://localhost:11434
+EMBEDDING_BATCH_SIZE=16
+
+# ... other settings
+EOF
+```
+
+#### Run the Pipeline
+
+```bash
+# Verify configuration
+python scripts/verify_embedding_config.py
+
+# Run pipeline (make sure Ollama server is running!)
+python scripts/run_pipeline.py
+```
+
+#### Ollama Model Specifications
+
+| Model | Dimensions | Context | Memory | Use Case |
+|-------|-----------|---------|--------|----------|
+| **nomic-embed-text** | 768 | 8192 | ~700MB | General purpose, long context |
+| **mxbai-embed-large** | 1024 | 512 | ~1.2GB | Highest quality |
+
+---
+
+### Performance Comparison
+
+| Approach | Setup | Memory | Speed | Offline | Recommended For |
+|----------|-------|--------|-------|---------|----------------|
+| **Sentence Transformers** ⭐ | Easy | 500MB-1GB | ⚡⚡⚡ | ✅ Yes | Development, Production |
+| **Ollama** | Moderate | 700MB-1.5GB | ⚡⚡ | ✅ Yes | Multi-model workflows |
+
+---
+
+### Memory Management
+
+#### Check Available Memory
+
+```bash
+# Quick memory check (macOS/Linux)
+free -h  # Linux
+vm_stat | perl -ne '/page size of (\d+)/ and $size=$1; /Pages\s+([^:]+)[^\d]+(\d+)/ and printf("%-16s % 16.2f Mi\n", "$1:", $2 * $size / 1048576);'  # macOS
+
+# Or use Activity Monitor (macOS) / Task Manager (Windows)
+open -a "Activity Monitor"  # macOS
+```
+
+#### Free Up Memory Before Running
+
+1. **Close memory-intensive applications**:
+   ```bash
+   # Close common memory hogs
+   killall "Google Chrome"
+   killall "Slack"
+   osascript -e 'quit app "Docker"'  # If not needed
+   ```
+
+2. **Monitor memory usage**:
+   ```bash
+   # Install htop (if not installed)
+   brew install htop  # macOS
+   
+   # Run htop to monitor
+   htop
+   # Press 'F6' to sort by memory
+   # Press 'q' to quit
+   ```
+
+3. **Clear system cache** (if needed):
+   ```bash
+   # Clear user cache
+   rm -rf ~/Library/Caches/*
+   
+   # Purge system memory (requires sudo)
+   sudo purge
+   ```
+
+#### Recommended Memory Availability
+
+- **Minimum**: 4GB free RAM
+- **Recommended**: 8GB free RAM
+- **Optimal**: 12GB+ free RAM
+
+**Memory breakdown for pipeline**:
+- Python process: ~1-2GB
+- Embedding model: ~500MB-1.5GB (depending on choice)
+- Ollama server: ~500MB (if using Ollama)
+- Working memory: ~2-3GB
+- **Total**: 4-7GB
+
+---
+
+### Troubleshooting
+
+#### Issue: Model Download Fails (Sentence Transformers)
+
+```bash
+# Solution 1: Clear cache and retry
+rm -rf ~/.cache/huggingface/
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')"
+
+# Solution 2: Manual download
+export HF_ENDPOINT=https://hf-mirror.com  # If behind firewall
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')"
+```
+
+#### Issue: Ollama Connection Refused
+
+```bash
+# Check if Ollama is running
+curl http://localhost:11434/api/tags
+
+# If not running, start Ollama server
+ollama serve
+
+# Check if model exists
+ollama list
+
+# Pull model if missing
+ollama pull nomic-embed-text
+```
+
+#### Issue: Out of Memory
+
+```bash
+# Reduce batch size in .env
+EMBEDDING_BATCH_SIZE=8  # Default is 32
+
+# Or use CPU instead of GPU
+# Set device in code (if needed)
+```
+
+#### Issue: Slow Embedding Generation
+
+```bash
+# Check GPU availability (if applicable)
+python -c "import torch; print('GPU available:', torch.cuda.is_available())"
+
+# For CPU-only systems, use smaller batch sizes
+EMBEDDING_BATCH_SIZE=16
+```
+
+---
+
+### Quick Start Commands Reference
+
+```bash
+# ============================================================================
+# Option 1: Sentence Transformers (Recommended)
+# ============================================================================
+
+# Setup
+echo "EMBEDDING_PROVIDER=sentence-transformers" >> .env
+echo "EMBEDDING_MODEL=BAAI/bge-small-en-v1.5" >> .env
+
+# Run (model downloads automatically on first use)
+python scripts/run_pipeline.py
+
+# ============================================================================
+# Option 2: Ollama
+# ============================================================================
+
+# Check if installed
+ollama --version || brew install ollama
+
+# Terminal 1: Start server
+ollama serve
+
+# Terminal 2: Setup and run
+ollama pull nomic-embed-text
+echo "EMBEDDING_PROVIDER=ollama" >> .env
+echo "EMBEDDING_MODEL=nomic-embed-text" >> .env
+python scripts/run_pipeline.py
+
+# ============================================================================
+# Monitoring
+# ============================================================================
+
+# Terminal 3: Monitor resources
+htop  # or: watch -n 2 "ps aux | sort -rk 4 | head -10"
+```
+
+---
+
+### Additional Resources
+
+- **Sentence Transformers Documentation**: https://www.sbert.net/
+- **BGE Model Card**: https://huggingface.co/BAAI/bge-small-en-v1.5
+- **Ollama Documentation**: https://ollama.ai/docs
+- **Embedding Configuration Guide**: [docs/EMBEDDING_CONFIGURATION.md](docs/EMBEDDING_CONFIGURATION.md)
 

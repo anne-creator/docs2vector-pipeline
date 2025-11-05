@@ -1,3 +1,5 @@
+This is the file composed before the code implementation from the AI and the scraper part has been massively changed after
+
 # Amazon Sellers RAG: Semantic Chunking Implementation Guide
 
 This guide provides a detailed, step by step implementation approach for building the Amazon Sellers RAG system with a focus on semantic chunking best practices.

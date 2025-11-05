@@ -28,9 +28,31 @@ class Settings:
     DATA_DIR: Path = Path(os.getenv("DATA_DIR", str(PROJECT_ROOT / "data"))).resolve()
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
-    # Embedding Model Configuration
-    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    # ============================================================================
+    # Embedding Configuration
+    # ============================================================================
+    # Provider: "sentence-transformers" (local), "ollama" (local), "openai" (API)
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "sentence-transformers")
+    
+    # Model name (provider-specific)
+    # - sentence-transformers: "BAAI/bge-small-en-v1.5", "all-MiniLM-L6-v2", "all-mpnet-base-v2"
+    # - ollama: "nomic-embed-text", "mxbai-embed-large"
+    # - openai: "text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+    
+    # Batch size for embedding generation
     EMBEDDING_BATCH_SIZE: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
+    
+    # Ollama Configuration (for local Ollama server)
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    
+    # OpenAI-Compatible API Configuration
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_API_BASE: str = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+    OPENAI_ORG_ID: str = os.getenv("OPENAI_ORG_ID", "")  # Optional
+    
+    # Embedding dimension (auto-detected if not set, or override for custom models)
+    EMBEDDING_DIMENSION: Optional[int] = int(os.getenv("EMBEDDING_DIMENSION", "0")) or None
 
     # Scraper Configuration
     SCRAPER_DOWNLOAD_DELAY: float = float(os.getenv("SCRAPER_DOWNLOAD_DELAY", "1.0"))
@@ -54,6 +76,16 @@ class Settings:
 
         if not cls.NEO4J_PASSWORD:
             errors.append("NEO4J_PASSWORD is required")
+        
+        # Validate embedding provider settings
+        if cls.EMBEDDING_PROVIDER == "openai" and not cls.OPENAI_API_KEY:
+            errors.append("OPENAI_API_KEY is required when EMBEDDING_PROVIDER is 'openai'")
+        
+        if cls.EMBEDDING_PROVIDER not in ["sentence-transformers", "ollama", "openai"]:
+            errors.append(
+                f"Invalid EMBEDDING_PROVIDER: {cls.EMBEDDING_PROVIDER}. "
+                "Must be 'sentence-transformers', 'ollama', or 'openai'"
+            )
 
         if errors:
             logger.error(f"Configuration validation failed: {', '.join(errors)}")
@@ -89,6 +121,7 @@ class Settings:
             f"NEO4J_URI={self.NEO4J_URI}, "
             f"NEO4J_DATABASE={self.NEO4J_DATABASE}, "
             f"DATA_DIR={self.DATA_DIR}, "
+            f"EMBEDDING_PROVIDER={self.EMBEDDING_PROVIDER}, "
             f"EMBEDDING_MODEL={self.EMBEDDING_MODEL}, "
             f"CHUNK_SIZE={self.CHUNK_SIZE})"
         )

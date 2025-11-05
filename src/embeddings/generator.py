@@ -3,22 +3,23 @@
 import logging
 from typing import List, Dict, Any, Optional
 
-from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
 from ..utils.exceptions import EmbeddingError
 from ..utils.validators import validate_embedding
 from config.settings import Settings
 from .models import ModelConfig
+from .providers import SentenceTransformerProvider, OllamaProvider, OpenAIProvider
 
 logger = logging.getLogger(__name__)
 
 
 class EmbeddingGenerator:
-    """Generates vector embeddings for text chunks."""
+    """Generates vector embeddings for text chunks using various providers."""
 
     def __init__(
         self,
+        provider: Optional[str] = None,
         model_name: Optional[str] = None,
         batch_size: Optional[int] = None,
         device: Optional[str] = None,
@@ -27,22 +28,40 @@ class EmbeddingGenerator:
         Initialize embedding generator.
 
         Args:
+            provider: Embedding provider ("sentence-transformers", "ollama", "openai")
             model_name: Name of the embedding model
             batch_size: Batch size for processing
-            device: Device to use ('cpu', 'cuda', etc.)
+            device: Device to use for local models ('cpu', 'cuda', etc.)
         """
-        self.model_name = model_name or ModelConfig.DEFAULT_MODEL
-        self.batch_size = batch_size or ModelConfig.DEFAULT_BATCH_SIZE
+        self.provider_name = provider or Settings.EMBEDDING_PROVIDER
+        self.model_name = model_name or Settings.EMBEDDING_MODEL
+        self.batch_size = batch_size or Settings.EMBEDDING_BATCH_SIZE
 
-        logger.info(f"Loading embedding model: {self.model_name}")
+        logger.info(f"Initializing embedding generator...")
+        logger.info(f"Provider: {self.provider_name}, Model: {self.model_name}")
         logger.debug(f"Batch size: {self.batch_size}, Device: {device or 'auto'}")
+
+        # Initialize the appropriate provider
         try:
-            self.model = SentenceTransformer(self.model_name, device=device)
+            if self.provider_name == "sentence-transformers":
+                self.provider = SentenceTransformerProvider(self.model_name, device)
+            elif self.provider_name == "ollama":
+                self.provider = OllamaProvider(self.model_name, Settings.OLLAMA_BASE_URL)
+            elif self.provider_name == "openai":
+                self.provider = OpenAIProvider(
+                    self.model_name,
+                    Settings.OPENAI_API_KEY,
+                    Settings.OPENAI_API_BASE,
+                    Settings.OPENAI_ORG_ID,
+                )
+            else:
+                raise EmbeddingError(f"Unsupported embedding provider: {self.provider_name}")
+
             dimension = self.get_dimension()
-            logger.info(f"✅ Model loaded successfully (dimension: {dimension})")
+            logger.info(f"✅ Embedding generator initialized (dimension: {dimension})")
         except Exception as e:
-            logger.error(f"❌ Failed to load embedding model: {e}")
-            raise EmbeddingError(f"Failed to load embedding model: {e}") from e
+            logger.error(f"❌ Failed to initialize embedding generator: {e}")
+            raise EmbeddingError(f"Failed to initialize embedding generator: {e}") from e
 
     def get_dimension(self) -> int:
         """
@@ -51,7 +70,7 @@ class EmbeddingGenerator:
         Returns:
             Embedding dimension
         """
-        return ModelConfig.get_model_dimension(self.model_name)
+        return self.provider.get_dimension()
 
     def generate_embedding(self, text: str) -> List[float]:
         """
@@ -65,9 +84,9 @@ class EmbeddingGenerator:
         """
         try:
             logger.debug(f"Generating embedding for text ({len(text)} chars)...")
-            embedding = self.model.encode(text, convert_to_numpy=True, show_progress_bar=False)
+            embedding = self.provider.generate_embedding(text)
             logger.debug(f"Generated embedding with dimension {len(embedding)}")
-            return embedding.tolist()
+            return embedding
         except Exception as e:
             logger.error(f"❌ Error generating embedding: {e}")
             raise EmbeddingError(f"Failed to generate embedding: {e}") from e
@@ -88,11 +107,9 @@ class EmbeddingGenerator:
 
         try:
             logger.debug(f"Generating batch embeddings for {len(texts)} texts...")
-            embeddings = self.model.encode(
-                texts, convert_to_numpy=True, show_progress_bar=False, batch_size=self.batch_size
-            )
+            embeddings = self.provider.generate_embeddings_batch(texts)
             logger.debug(f"Generated {len(embeddings)} embeddings")
-            return embeddings.tolist()
+            return embeddings
         except Exception as e:
             logger.error(f"❌ Error generating batch embeddings: {e}")
             raise EmbeddingError(f"Failed to generate batch embeddings: {e}") from e
@@ -112,7 +129,9 @@ class EmbeddingGenerator:
             return []
 
         logger.info(f"Generating embeddings for {len(chunks)} chunks...")
-        logger.debug(f"Model: {self.model_name}, Batch size: {self.batch_size}")
+        logger.debug(
+            f"Provider: {self.provider_name}, Model: {self.model_name}, Batch size: {self.batch_size}"
+        )
 
         # Extract texts to embed
         texts = [chunk.get("content", "") for chunk in chunks]

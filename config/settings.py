@@ -82,10 +82,13 @@ class Settings:
     # ============================================================================
     # Integration Configuration
     # ============================================================================
-    # LlamaIndex Cloud Configuration
-    LLAMAINDEX_API_KEY: str = os.getenv("LLAMAINDEX_API_KEY", "")
-    LLAMAINDEX_BASE_URL: str = os.getenv("LLAMAINDEX_BASE_URL", "https://cloud.llamaindex.ai")
-    LLAMAINDEX_PIPELINE_ID: str = os.getenv("LLAMAINDEX_PIPELINE_ID", "")
+    # LlamaIndex Cloud Configuration (OPTIONAL - disabled by default)
+    USE_LLAMAINDEX: bool = os.getenv("USE_LLAMAINDEX", "false").lower() == "true"
+    LLAMACLOUD_API_KEY: str = os.getenv("LLAMACLOUD_API_KEY", "")
+    LLAMACLOUD_BASE_URL: str = os.getenv("LLAMACLOUD_BASE_URL", "https://api.cloud.llamaindex.ai")
+    LLAMACLOUD_INDEX_NAME: str = os.getenv("LLAMACLOUD_INDEX_NAME", "")
+    LLAMACLOUD_PROJECT_NAME: str = os.getenv("LLAMACLOUD_PROJECT_NAME", "Default")
+    LLAMACLOUD_ORGANIZATION_ID: str = os.getenv("LLAMACLOUD_ORGANIZATION_ID", "")
 
     # n8n Configuration
     N8N_BASE_URL: str = os.getenv("N8N_BASE_URL", "http://localhost:5678")
@@ -104,6 +107,13 @@ class Settings:
     AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "")
     AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
     AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
+
+    # Pinecone Configuration (OPTIONAL - disabled by default)
+    USE_PINECONE: bool = os.getenv("USE_PINECONE", "false").lower() == "true"
+    PINECONE_API_KEY: str = os.getenv("PINECONE_API_KEY", "")
+    PINECONE_ENVIRONMENT: str = os.getenv("PINECONE_ENVIRONMENT", "")
+    PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME", "")
+    PINECONE_NAMESPACE: str = os.getenv("PINECONE_NAMESPACE", "")
 
     @classmethod
     def validate(cls) -> bool:
@@ -141,6 +151,20 @@ class Settings:
                 errors.append("NEO4J_USERNAME is required when USE_NEO4J is enabled")
             if not cls.NEO4J_PASSWORD:
                 errors.append("NEO4J_PASSWORD is required when USE_NEO4J is enabled")
+        
+        # Validate LlamaIndex configuration only if enabled
+        if cls.USE_LLAMAINDEX:
+            if not cls.LLAMACLOUD_API_KEY:
+                errors.append("LLAMACLOUD_API_KEY is required when USE_LLAMAINDEX is enabled")
+            if not cls.LLAMACLOUD_INDEX_NAME:
+                errors.append("LLAMACLOUD_INDEX_NAME is required when USE_LLAMAINDEX is enabled")
+        
+        # Validate Pinecone configuration only if enabled
+        if cls.USE_PINECONE:
+            if not cls.PINECONE_API_KEY:
+                errors.append("PINECONE_API_KEY is required when USE_PINECONE is enabled")
+            if not cls.PINECONE_INDEX_NAME:
+                errors.append("PINECONE_INDEX_NAME is required when USE_PINECONE is enabled")
         
         # Validate embedding provider settings
         if cls.EMBEDDING_PROVIDER == "openai" and not cls.OPENAI_API_KEY:

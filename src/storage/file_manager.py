@@ -209,10 +209,29 @@ class FileManager:
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(chunks_with_embeddings, f, ensure_ascii=False)
+            # Use larger buffer for large files and write in chunks
+            # to avoid BlockingIOError on very large embedding files
+            with open(file_path, "w", encoding="utf-8", buffering=8192*16) as f:
+                json.dump(chunks_with_embeddings, f, ensure_ascii=False, indent=None)
             logger.info(f"Saved {len(chunks_with_embeddings)} chunks with embeddings to {file_path}")
             return file_path
+        except (IOError, OSError, BlockingIOError) as e:
+            logger.error(f"I/O error saving embeddings: {e}")
+            # Try one more time with smaller chunks
+            try:
+                logger.info(f"Retrying save with line-by-line writing...")
+                with open(file_path, "w", encoding="utf-8", buffering=8192*16) as f:
+                    f.write("[")
+                    for i, chunk in enumerate(chunks_with_embeddings):
+                        if i > 0:
+                            f.write(",")
+                        f.write(json.dumps(chunk, ensure_ascii=False))
+                    f.write("]")
+                logger.info(f"Successfully saved {len(chunks_with_embeddings)} chunks (retry)")
+                return file_path
+            except Exception as retry_err:
+                logger.error(f"Retry also failed: {retry_err}")
+                raise StorageError(f"Failed to save embeddings after retry: {retry_err}") from retry_err
         except Exception as e:
             logger.error(f"Error saving embeddings: {e}")
             raise StorageError(f"Failed to save embeddings: {e}") from e

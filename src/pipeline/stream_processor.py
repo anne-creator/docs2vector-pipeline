@@ -15,6 +15,7 @@ from ..processor.chunker import SemanticChunker
 from ..processor.metadata import MetadataExtractor
 from ..embeddings.generator import EmbeddingGenerator
 from ..storage.file_manager import FileManager
+from ..integrations.pinecone.client import PineconeClient
 from ..utils.exceptions import PipelineError
 from config.settings import Settings
 
@@ -62,6 +63,7 @@ class StreamProcessor:
         self,
         storage_mode: str = "local",
         s3_client: Optional[Any] = None,
+        pinecone_client: Optional[PineconeClient] = None,
         max_workers: int = 3
     ):
         """
@@ -70,10 +72,12 @@ class StreamProcessor:
         Args:
             storage_mode: Storage mode ("local" or "s3")
             s3_client: Optional S3 client for cloud sync
+            pinecone_client: Optional Pinecone client for real-time vector upload
             max_workers: Maximum number of concurrent processing workers
         """
         self.storage_mode = storage_mode
         self.s3_client = s3_client
+        self.pinecone_client = pinecone_client
         self.max_workers = max_workers
         
         # Initialize pipeline components
@@ -90,6 +94,7 @@ class StreamProcessor:
             "documents_processed": 0,
             "chunks_created": 0,
             "embeddings_generated": 0,
+            "chunks_uploaded_pinecone": 0,
             "errors": 0
         }
         self.stats_lock = threading.Lock()
@@ -102,7 +107,7 @@ class StreamProcessor:
         self.workers: List[threading.Thread] = []
         self.stop_event = threading.Event()
         
-        logger.info(f"🌊 StreamProcessor initialized (workers={max_workers}, storage={storage_mode})")
+        logger.info(f"🌊 StreamProcessor initialized (workers={max_workers}, storage={storage_mode}, pinecone={'enabled' if pinecone_client else 'disabled'})")
     
     def start_watching(self, watch_dir: Optional[Path] = None) -> None:
         """
@@ -264,13 +269,35 @@ class StreamProcessor:
         chunks_path = Settings.get_data_path("chunks") / chunks_filename
         self.file_manager.save_chunks(chunks_with_embeddings, filename=chunks_filename)
         
+        # Save embeddings separately
+        embeddings_filename = f"{base_name}_embeddings.json"
+        embeddings_path = Settings.get_data_path("embeddings") / embeddings_filename
+        self.file_manager.save_embeddings(chunks_with_embeddings, filename=embeddings_filename)
+        
         # Sync to S3 if configured
         if self.storage_mode == "s3" and self.s3_client:
             try:
                 self.s3_client.upload_file(proc_path, f"pipeline/processed/{proc_filename}")
                 self.s3_client.upload_file(chunks_path, f"pipeline/chunks/{chunks_filename}")
+                self.s3_client.upload_file(embeddings_path, f"pipeline/embeddings/{embeddings_filename}")
             except Exception as e:
                 logger.warning(f"S3 sync failed for {base_name}: {e}")
+        
+        # Upload to Pinecone if configured (STREAMING UPLOAD!)
+        if self.pinecone_client and Settings.USE_PINECONE:
+            try:
+                logger.info(f"📌 Uploading {len(chunks_with_embeddings)} chunks to Pinecone...")
+                sync_result = self.pinecone_client.sync_documents(chunks_with_embeddings)
+                uploaded_count = sync_result.get("new_count", 0) + sync_result.get("updated_count", 0)
+                
+                # Update stats
+                with self.stats_lock:
+                    self.stats["chunks_uploaded_pinecone"] += uploaded_count
+                
+                logger.info(f"✅ Pinecone upload completed: {uploaded_count} chunks")
+            except Exception as e:
+                logger.error(f"❌ Pinecone upload failed for {base_name}: {e}")
+                # Don't raise - continue processing other items
     
     def get_stats(self) -> Dict[str, int]:
         """Get current processing statistics."""

@@ -11,9 +11,11 @@ from src.integrations.llamaindex.client import LlamaIndexClient
 def mock_settings():
     """Mock settings for testing."""
     with patch('src.integrations.llamaindex.client.Settings') as mock:
-        mock.LLAMAINDEX_API_KEY = "test_api_key"
-        mock.LLAMAINDEX_BASE_URL = "https://test.llamaindex.ai"
-        mock.LLAMAINDEX_PIPELINE_ID = "test_pipeline_id"
+        mock.LLAMACLOUD_API_KEY = "test_api_key"
+        mock.LLAMACLOUD_BASE_URL = "https://api.cloud.llamaindex.ai"
+        mock.LLAMACLOUD_INDEX_NAME = "test-index"
+        mock.LLAMACLOUD_PROJECT_NAME = "Default"
+        mock.LLAMACLOUD_ORGANIZATION_ID = "test-org-id"
         yield mock
 
 
@@ -26,8 +28,10 @@ def client(mock_settings):
 def test_init(client):
     """Test client initialization."""
     assert client.api_key == "test_api_key"
-    assert client.base_url == "https://test.llamaindex.ai"
-    assert client.pipeline_id == "test_pipeline_id"
+    assert client.base_url == "https://api.cloud.llamaindex.ai"
+    assert client.index_name == "test-index"
+    assert client.project_name == "Default"
+    assert client.organization_id == "test-org-id"
     assert client.session is None
     assert not client.is_connected()
 
@@ -35,7 +39,11 @@ def test_init(client):
 def test_init_no_api_key():
     """Test initialization fails without API key."""
     with patch('src.integrations.llamaindex.client.Settings') as mock:
-        mock.LLAMAINDEX_API_KEY = ""
+        mock.LLAMACLOUD_API_KEY = ""
+        mock.LLAMACLOUD_BASE_URL = "https://api.cloud.llamaindex.ai"
+        mock.LLAMACLOUD_INDEX_NAME = "test-index"
+        mock.LLAMACLOUD_PROJECT_NAME = "Default"
+        mock.LLAMACLOUD_ORGANIZATION_ID = "test-org-id"
         with pytest.raises(ValueError, match="API key is required"):
             LlamaIndexClient()
 

@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # Main API service
+  pipeline-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: docs2vector-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Storage Configuration
+      - STORAGE_MODE=${STORAGE_MODE:-auto}
+      - PIPELINE_MODE=${PIPELINE_MODE:-streaming}
+      
+      # AWS S3 (optional)
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      
+      # Pinecone Configuration
+      - USE_PINECONE=${USE_PINECONE:-false}
+      - PINECONE_API_KEY=${PINECONE_API_KEY:-}
+      - PINECONE_ENVIRONMENT=${PINECONE_ENVIRONMENT:-}
+      - PINECONE_INDEX_NAME=${PINECONE_INDEX_NAME:-}
+      - PINECONE_NAMESPACE=${PINECONE_NAMESPACE:-}
+      
+      # Embedding Configuration
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-sentence-transformers}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      - EMBEDDING_BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-32}
+      
+      # Pipeline Configuration
+      - DATA_DIR=/app/data
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      
+      # Scraper Configuration
+      - SCRAPER_DOWNLOAD_DELAY=${SCRAPER_DOWNLOAD_DELAY:-1.0}
+      - SCRAPER_CONCURRENT_REQUESTS=${SCRAPER_CONCURRENT_REQUESTS:-2}
+      - SCRAPER_DEPTH_LIMIT=${SCRAPER_DEPTH_LIMIT:-4}
+      
+      # Chunking Configuration
+      - CHUNK_SIZE=${CHUNK_SIZE:-512}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-64}
+      
+      # API Configuration
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - API_RELOAD=false
+    volumes:
+      # Mount data directory for persistence
+      - ./data:/app/data
+      # Mount logs directory
+      - ./logs:/app/logs
+      # Mount .env file
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - pipeline-network
+
+networks:
+  pipeline-network:
+    driver: bridge
+
+volumes:
+  pipeline-data:
+    driver: local
+

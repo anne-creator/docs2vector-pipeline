@@ -12,8 +12,8 @@ from ..processor.chunker import SemanticChunker
 from ..processor.metadata import MetadataExtractor
 from ..embeddings.generator import EmbeddingGenerator
 from ..storage.file_manager import FileManager
-from ..storage.neo4j_client import Neo4jClient
 from ..integrations.s3.client import S3Client
+from ..integrations.pinecone.client import PineconeClient
 from ..utils.exceptions import PipelineError
 from .stream_processor import StreamProcessor
 from config.settings import Settings
@@ -39,8 +39,8 @@ class PipelineOrchestrator:
         self.metadata_extractor = MetadataExtractor()
         self.embedding_generator = EmbeddingGenerator()
         self.file_manager = FileManager()
-        self.neo4j_client: Optional[Neo4jClient] = None
         self.s3_client: Optional[S3Client] = None
+        self.pinecone_client: Optional[PineconeClient] = None
         self.stream_processor: Optional[StreamProcessor] = None
         
         # Determine storage mode
@@ -58,18 +58,6 @@ class PipelineOrchestrator:
         logger.info(f"Pipeline storage mode: {self.storage_mode}")
         logger.info(f"Pipeline processing mode: {self.pipeline_mode}")
 
-    def connect_neo4j(self) -> None:
-        """Connect to Neo4j database."""
-        try:
-            self.neo4j_client = Neo4jClient()
-            self.neo4j_client.initialize_schema()
-            # Get embedding dimension for vector index
-            dimension = self.embedding_generator.get_dimension()
-            self.neo4j_client.create_vector_index(dimension)
-        except Exception as e:
-            logger.error(f"Failed to connect to Neo4j: {e}")
-            raise PipelineError(f"Failed to connect to Neo4j: {e}") from e
-    
     def connect_s3(self) -> bool:
         """
         Connect to AWS S3.
@@ -88,6 +76,26 @@ class PipelineOrchestrator:
                 return False
         except Exception as e:
             logger.warning(f"⚠️  Could not initialize S3 client: {e}")
+            return False
+    
+    def connect_pinecone(self) -> bool:
+        """
+        Connect to Pinecone vector database.
+        
+        Returns:
+            True if connection successful
+        """
+        try:
+            logger.info("Connecting to Pinecone...")
+            self.pinecone_client = PineconeClient()
+            if self.pinecone_client.connect():
+                logger.info("✅ Connected to Pinecone")
+                return True
+            else:
+                logger.warning("⚠️  Failed to connect to Pinecone")
+                return False
+        except Exception as e:
+            logger.warning(f"⚠️  Could not initialize Pinecone client: {e}")
             return False
     
     def sync_to_s3(self, stage: str) -> None:
@@ -121,15 +129,15 @@ class PipelineOrchestrator:
             logger.warning(f"⚠️  Failed to sync {stage} to S3: {e}")
             # Don't raise - S3 sync is optional, pipeline should continue
 
-    def run_scraper(self, background: bool = False) -> Optional[Path]:
+    def run_scraper(self, background: bool = False):
         """
         Run the Scrapy spider to scrape data.
         
         Args:
-            background: If True, run in background and return None (for streaming mode)
+            background: If True, run in background and return process object (for streaming mode)
 
         Returns:
-            Path to saved raw data file (batch mode) or None (streaming mode)
+            Path to saved raw data file (batch mode) or subprocess.Popen object (streaming mode)
         """
         logger.info("Starting scraper...")
         try:
@@ -176,7 +184,7 @@ class PipelineOrchestrator:
                 output_thread = threading.Thread(target=log_output, daemon=True)
                 output_thread.start()
                 
-                return None
+                return process  # Return process object so caller can monitor it
             else:
                 # Run and wait for batch mode
                 result = subprocess.run(
@@ -292,24 +300,31 @@ class PipelineOrchestrator:
             logger.error(f"Error generating embeddings: {e}")
             raise PipelineError(f"Failed to generate embeddings: {e}") from e
 
-    def load_to_neo4j(self, chunks_with_embeddings: List[Dict[str, Any]]) -> None:
+    def upload_to_pinecone(self, chunks_with_embeddings: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Load chunks with embeddings into Neo4j.
+        Upload chunks with embeddings to Pinecone vector database.
+        Uses intelligent sync to only upload new/updated documents.
 
         Args:
             chunks_with_embeddings: List of chunks with embeddings
-        """
-        if self.neo4j_client is None:
-            self.connect_neo4j()
 
-        logger.info(f"Loading {len(chunks_with_embeddings)} chunks to Neo4j...")
+        Returns:
+            Dictionary with sync results
+        """
+        if self.pinecone_client is None:
+            if not self.connect_pinecone():
+                raise PipelineError("Failed to connect to Pinecone")
+
+        logger.info(f"Syncing {len(chunks_with_embeddings)} chunks to Pinecone...")
 
         try:
-            self.neo4j_client.batch_upsert_chunks(chunks_with_embeddings)
-            logger.info(f"Successfully loaded {len(chunks_with_embeddings)} chunks to Neo4j")
+            # Use sync_documents which intelligently handles new/updated/unchanged
+            result = self.pinecone_client.sync_documents(chunks_with_embeddings)
+            logger.info(f"Successfully synced chunks to Pinecone")
+            return result
         except Exception as e:
-            logger.error(f"Error loading to Neo4j: {e}")
-            raise PipelineError(f"Failed to load to Neo4j: {e}") from e
+            logger.error(f"Error uploading to Pinecone: {e}")
+            raise PipelineError(f"Failed to upload to Pinecone: {e}") from e
 
     def run_full_pipeline(self) -> Dict[str, Any]:
         """
@@ -323,7 +338,6 @@ class PipelineOrchestrator:
         logger.info("🚀 STARTING FULL PIPELINE")
         logger.info(f"   Processing Mode: {self.pipeline_mode}")
         logger.info(f"   Storage Mode: {self.storage_mode}")
-        logger.info(f"   Neo4j: {'Enabled' if Settings.USE_NEO4J else 'Disabled'}")
         logger.info("=" * 70)
         
         # Choose execution mode
@@ -347,7 +361,6 @@ class PipelineOrchestrator:
             "documents_processed": 0,
             "chunks_created": 0,
             "embeddings_generated": 0,
-            "chunks_loaded": 0,
             "storage_mode": self.storage_mode,
             "success": False,
         }
@@ -360,9 +373,15 @@ class PipelineOrchestrator:
                 results["storage_mode"] = "local"
 
         try:
+            # Determine total stages
+            total_stages = 4  # Base stages: scrape, process, chunk, embed
+            if Settings.USE_PINECONE:
+                total_stages += 1
+            current_stage = 1
+
             # Stage 1: Scrape
             logger.info("")
-            logger.info("📡 STAGE 1/5: SCRAPING")
+            logger.info(f"📡 STAGE {current_stage}/{total_stages}: SCRAPING")
             logger.info("-" * 70)
             try:
                 raw_data_file = self.run_scraper()
@@ -376,9 +395,11 @@ class PipelineOrchestrator:
                 results["stage"] = "scraper"
                 return results
 
+            current_stage += 1
+
             # Stage 2: Process
             logger.info("")
-            logger.info("⚙️  STAGE 2/5: PROCESSING")
+            logger.info(f"⚙️  STAGE {current_stage}/{total_stages}: PROCESSING")
             logger.info("-" * 70)
             try:
                 processed_docs = self.process_documents(raw_data_file)
@@ -392,9 +413,11 @@ class PipelineOrchestrator:
                 results["stage"] = "processor"
                 return results
 
+            current_stage += 1
+
             # Stage 3: Chunk
             logger.info("")
-            logger.info("✂️  STAGE 3/5: CHUNKING")
+            logger.info(f"✂️  STAGE {current_stage}/{total_stages}: CHUNKING")
             logger.info("-" * 70)
             try:
                 chunks = self.chunk_documents(processed_docs)
@@ -408,9 +431,11 @@ class PipelineOrchestrator:
                 results["stage"] = "chunker"
                 return results
 
+            current_stage += 1
+
             # Stage 4: Generate embeddings
             logger.info("")
-            logger.info("🧠 STAGE 4/5: GENERATING EMBEDDINGS")
+            logger.info(f"🧠 STAGE {current_stage}/{total_stages}: GENERATING EMBEDDINGS")
             logger.info("-" * 70)
             try:
                 chunks_with_embeddings = self.generate_embeddings(chunks)
@@ -424,28 +449,32 @@ class PipelineOrchestrator:
                 results["stage"] = "embeddings"
                 return results
 
-            # Stage 5: Load to Neo4j (Optional)
-            if Settings.USE_NEO4J:
+            # Stage 5: Upload to Pinecone (Optional)
+            if Settings.USE_PINECONE:
+                current_stage += 1
                 logger.info("")
-                logger.info("💾 STAGE 5/5: LOADING TO NEO4J")
+                logger.info(f"📌 STAGE {current_stage}/{total_stages}: UPLOADING TO PINECONE")
                 logger.info("-" * 70)
                 try:
-                    self.load_to_neo4j(chunks_with_embeddings)
-                    results["chunks_loaded"] = len(chunks_with_embeddings)
-                    logger.info(f"✅ Neo4j storage completed: {len(chunks_with_embeddings)} chunks loaded")
+                    sync_result = self.upload_to_pinecone(chunks_with_embeddings)
+                    results["chunks_synced_pinecone"] = sync_result.get("new_count", 0) + sync_result.get("updated_count", 0)
+                    results["pinecone_sync_details"] = sync_result
+                    logger.info(f"✅ Pinecone sync completed")
                 except Exception as e:
-                    logger.error(f"❌ Neo4j storage failed: {e}")
+                    logger.error(f"❌ Pinecone upload failed: {e}")
                     results["error"] = str(e)
-                    results["stage"] = "neo4j"
+                    results["stage"] = "pinecone"
                     return results
-            else:
-                logger.info("")
-                logger.info("💾 STAGE 5/5: NEO4J (SKIPPED)")
-                logger.info("-" * 70)
-                logger.info("ℹ️  Neo4j is disabled. Set USE_NEO4J=true to enable.")
-                logger.info(f"✅ All data saved locally in: {Settings.DATA_DIR}")
-                if self.storage_mode == "s3":
-                    logger.info(f"✅ Data synced to S3 bucket: {Settings.S3_BUCKET_NAME}")
+
+            # Final summary
+            logger.info("")
+            logger.info("💾 DATA STORAGE")
+            logger.info("-" * 70)
+            logger.info(f"✅ All data saved locally in: {Settings.DATA_DIR}")
+            if self.storage_mode == "s3":
+                logger.info(f"✅ Data synced to S3 bucket: {Settings.S3_BUCKET_NAME}")
+            if Settings.USE_PINECONE:
+                logger.info(f"✅ Vectors uploaded to Pinecone index: {Settings.PINECONE_INDEX_NAME}")
 
             results["success"] = True
 
@@ -459,10 +488,10 @@ class PipelineOrchestrator:
             results["stage"] = "unknown"
 
         finally:
-            if self.neo4j_client:
-                self.neo4j_client.close()
             if self.s3_client:
                 self.s3_client.disconnect()
+            if self.pinecone_client:
+                self.pinecone_client.disconnect()
 
         return results
     
@@ -481,7 +510,7 @@ class PipelineOrchestrator:
             "documents_processed": 0,
             "chunks_created": 0,
             "embeddings_generated": 0,
-            "chunks_loaded": 0,
+            "chunks_uploaded_pinecone": 0,
             "storage_mode": self.storage_mode,
             "success": False,
         }
@@ -492,12 +521,20 @@ class PipelineOrchestrator:
                 logger.error("Failed to connect to S3. Falling back to local storage.")
                 self.storage_mode = "local"
                 results["storage_mode"] = "local"
+        
+        # Connect to Pinecone if enabled (for streaming uploads)
+        if Settings.USE_PINECONE:
+            if not self.connect_pinecone():
+                logger.error("Failed to connect to Pinecone. Streaming uploads will be skipped.")
+            else:
+                logger.info("✅ Pinecone connected - will upload vectors in real-time during streaming")
 
         try:
-            # Initialize stream processor
+            # Initialize stream processor with Pinecone client
             self.stream_processor = StreamProcessor(
                 storage_mode=self.storage_mode,
                 s3_client=self.s3_client,
+                pinecone_client=self.pinecone_client,
                 max_workers=3
             )
             
@@ -512,7 +549,7 @@ class PipelineOrchestrator:
             logger.info("📡 STAGE 1: SCRAPING (Background)")
             logger.info("-" * 70)
             try:
-                self.run_scraper(background=True)
+                scraper_process = self.run_scraper(background=True)
                 logger.info("✅ Scraper started in background")
                 logger.info("🌊 Items will be processed concurrently as they arrive...")
             except Exception as e:
@@ -521,11 +558,11 @@ class PipelineOrchestrator:
                 results["stage"] = "scraper"
                 return results
 
-            # Stages 2-4 run concurrently in worker threads as items arrive
+            # Stages 2-5 run concurrently in worker threads as items arrive
             logger.info("")
-            logger.info("⚙️  STAGES 2-4: PROCESSING (Concurrent)")
+            logger.info("⚙️  STAGES 2-5: PROCESSING (Concurrent)")
             logger.info("-" * 70)
-            logger.info("🔄 Stage 2: Processing → Stage 3: Chunking → Stage 4: Embeddings")
+            logger.info("🔄 Stage 2: Processing → Stage 3: Chunking → Stage 4: Embeddings → Stage 5: Pinecone Upload")
             logger.info("   All stages running in parallel for each scraped item")
             
             # Monitor progress
@@ -549,16 +586,23 @@ class PipelineOrchestrator:
                         f"Docs={current_stats['documents_processed']}, "
                         f"Chunks={current_stats['chunks_created']}, "
                         f"Embeddings={current_stats['embeddings_generated']}, "
+                        f"Pinecone={current_stats['chunks_uploaded_pinecone']}, "
                         f"Errors={current_stats['errors']}"
                     )
                     last_stats = current_stats.copy()
                 
-                # Check if queue is empty
-                if self.stream_processor.file_queue.empty() and \
+                # Check if scraper is still running
+                scraper_running = scraper_process and scraper_process.poll() is None
+                
+                # Check if we're done: scraper finished AND queue is empty
+                if not scraper_running and \
+                   self.stream_processor.file_queue.empty() and \
                    self.stream_processor.file_queue.unfinished_tasks == 0:
-                    # Wait a bit more to ensure scraper is done
+                    # Wait a bit more to ensure all files are processed
+                    logger.info("🛑 Scraper finished. Waiting for remaining items to be processed...")
                     time.sleep(5)
-                    if self.stream_processor.file_queue.empty():
+                    if self.stream_processor.file_queue.empty() and \
+                       self.stream_processor.file_queue.unfinished_tasks == 0:
                         logger.info("✅ All items processed")
                         break
                 
@@ -569,41 +613,20 @@ class PipelineOrchestrator:
             results["documents_processed"] = final_stats["documents_processed"]
             results["chunks_created"] = final_stats["chunks_created"]
             results["embeddings_generated"] = final_stats["embeddings_generated"]
+            results["chunks_uploaded_pinecone"] = final_stats["chunks_uploaded_pinecone"]
             
-            # Stage 5: Load to Neo4j (Optional)
-            if Settings.USE_NEO4J:
-                logger.info("")
-                logger.info("💾 STAGE 5: LOADING TO NEO4J")
-                logger.info("-" * 70)
-                try:
-                    # Collect all chunks files
-                    chunks_dir = Settings.get_data_path("chunks")
-                    all_chunks = []
-                    for chunks_file in chunks_dir.glob("item_*_chunks.json"):
-                        with open(chunks_file) as f:
-                            import json
-                            chunks_data = json.load(f)
-                            all_chunks.extend(chunks_data)
-                    
-                    if all_chunks:
-                        self.load_to_neo4j(all_chunks)
-                        results["chunks_loaded"] = len(all_chunks)
-                        logger.info(f"✅ Neo4j storage completed: {len(all_chunks)} chunks loaded")
-                    else:
-                        logger.warning("No chunks found to load to Neo4j")
-                except Exception as e:
-                    logger.error(f"❌ Neo4j storage failed: {e}")
-                    results["error"] = str(e)
-                    results["stage"] = "neo4j"
-                    return results
-            else:
-                logger.info("")
-                logger.info("💾 STAGE 5: NEO4J (SKIPPED)")
-                logger.info("-" * 70)
-                logger.info("ℹ️  Neo4j is disabled. Set USE_NEO4J=true to enable.")
-                logger.info(f"✅ All data saved locally in: {Settings.DATA_DIR}")
-                if self.storage_mode == "s3":
-                    logger.info(f"✅ Data synced to S3 bucket: {Settings.S3_BUCKET_NAME}")
+            # Note: Pinecone upload now happens in real-time during streaming
+            # The old Stage 5 batch upload has been removed and is now handled in StreamProcessor
+            
+            # Final summary
+            logger.info("")
+            logger.info("💾 DATA STORAGE")
+            logger.info("-" * 70)
+            logger.info(f"✅ All data saved locally in: {Settings.DATA_DIR}")
+            if self.storage_mode == "s3":
+                logger.info(f"✅ Data synced to S3 bucket: {Settings.S3_BUCKET_NAME}")
+            if Settings.USE_PINECONE:
+                logger.info(f"✅ Vectors uploaded to Pinecone in real-time: {results['chunks_uploaded_pinecone']} chunks to index: {Settings.PINECONE_INDEX_NAME}")
 
             results["success"] = True
 
@@ -622,10 +645,10 @@ class PipelineOrchestrator:
             if self.stream_processor:
                 self.stream_processor.stop_workers()
                 self.stream_processor.stop_watching()
-            if self.neo4j_client:
-                self.neo4j_client.close()
             if self.s3_client:
                 self.s3_client.disconnect()
+            if self.pinecone_client:
+                self.pinecone_client.disconnect()
 
         return results
 

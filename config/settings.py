@@ -75,10 +75,6 @@ class Settings:
     CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "512"))
     CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "64"))
 
-    # CSV Export Configuration
-    CSV_INCLUDE_EMBEDDINGS: bool = os.getenv("CSV_INCLUDE_EMBEDDINGS", "true").lower() == "true"
-    CSV_OUTPUT_DIR: Path = Path(os.getenv("CSV_OUTPUT_DIR", str(PROJECT_ROOT / "data" / "csv_export"))).resolve()
-
     # ============================================================================
     # Integration Configuration
     # ============================================================================
@@ -198,7 +194,6 @@ class Settings:
             "embeddings",
             "hashes",
             "manifests",
-            "csv_export",
         ]
         for directory in directories:
             cls.get_data_path(directory).mkdir(parents=True, exist_ok=True)

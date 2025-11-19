@@ -66,33 +66,12 @@ pip install -r requirements.txt
 ```bash
 # Copy example config
 cp env.example .env
-
-# Edit .env with your Pinecone credentials
-USE_PINECONE=true
-PINECONE_API_KEY=your-api-key-here
-PINECONE_INDEX_NAME=amazon-seller-docs
-PINECONE_ENVIRONMENT=us-west1-gcp
 ```
 
-**Create Pinecone Index:**
-1. Go to https://app.pinecone.io/
-2. Create index: Name=`amazon-seller-docs`, Dimensions=`384`, Metric=`cosine`
-3. Copy API key to `.env`
-
 ### 3. Run
-
-**Option A: Run Pipeline Directly**
 ```bash
 python scripts/run_pipeline.py --mode full
 ```
-
-**Option B: Run API Server (for N8N)**
-```bash
-python scripts/run_api_server.py
-# API available at: http://localhost:8000
-# Trigger: POST http://localhost:8000/api/v1/trigger-scrape
-```
-
 ---
 
 ## 🏗️ Architecture
@@ -196,14 +175,6 @@ pip install --upgrade pip
 ```bash
 # Install all required packages
 pip install -r requirements.txt
-
-# This installs:
-# - scrapy (web scraping)
-# - sentence-transformers (embeddings)
-# - pinecone-client (vector database)
-# - fastapi + uvicorn (API server)
-# - playwright (browser automation)
-# - and more...
 ```
 
 ### 4. Install Playwright Browsers
@@ -271,10 +242,6 @@ SCRAPER_DEPTH_LIMIT=4
 CHUNK_SIZE=512
 CHUNK_OVERLAP=64
 
-# AWS S3 (optional backup)
-S3_BUCKET_NAME=
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
 ```
 
 ### Pinecone Index Setup
@@ -301,12 +268,6 @@ AWS_SECRET_ACCESS_KEY=
 ```bash
 # Run complete pipeline: scrape → process → chunk → embed → upload
 python scripts/run_pipeline.py --mode full
-```
-
-**Incremental Update:**
-```bash
-# Only process changed documents (faster)
-python scripts/run_pipeline.py --mode incremental
 ```
 
 **Check for Updates:**
@@ -337,7 +298,12 @@ API_PORT=9000 python scripts/run_api_server.py
 ```bash
 curl -X POST http://localhost:8000/api/v1/trigger-scrape \
   -H "Content-Type: application/json" \
-  -d '{"mode": "full"}'
+  -d '{}'
+
+# Or with webhook notification:
+curl -X POST http://localhost:8000/api/v1/trigger-scrape \
+  -H "Content-Type: application/json" \
+  -d '{"webhook_url": "https://your-n8n-webhook.com/pipeline-complete"}'
 
 # Response:
 # {
@@ -747,7 +713,7 @@ EMBEDDING_BATCH_SIZE=32              # Vectors processed per batch
 2. **Adjust batch sizes** based on RAM
 3. **Use GPU** for embeddings if available
 4. **Increase concurrent requests** for faster scraping
-5. **Use incremental mode** for regular updates
+5. **Use streaming mode** (`PIPELINE_MODE=streaming`) for faster processing
 
 ---
 
@@ -828,7 +794,7 @@ python scripts/run_api_server.py
 ```bash
 curl -X POST http://localhost:8000/api/v1/trigger-scrape \
   -H "Content-Type: application/json" \
-  -d '{"mode": "full"}'
+  -d '{}'
 ```
 
 **Check Status:**

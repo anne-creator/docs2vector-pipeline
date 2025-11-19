@@ -76,13 +76,12 @@ def notify_webhook(webhook_url: str, payload: WebhookPayload) -> None:
         logger.error(f"❌ Failed to send webhook notification: {e}")
 
 
-def run_pipeline_sync(job_id: str, mode: str, webhook_url: Optional[str]) -> None:
+def run_pipeline_sync(job_id: str, webhook_url: Optional[str]) -> None:
     """
     Run pipeline synchronously in background thread.
     
     Args:
         job_id: Job identifier
-        mode: Pipeline mode ('full' or 'incremental')
         webhook_url: Optional webhook URL to notify on completion
     """
     try:
@@ -95,11 +94,8 @@ def run_pipeline_sync(job_id: str, mode: str, webhook_url: Optional[str]) -> Non
         # Initialize orchestrator
         orchestrator = PipelineOrchestrator()
         
-        # Run pipeline
-        if mode == "incremental":
-            results = orchestrator.run_incremental_update()
-        else:
-            results = orchestrator.run_full_pipeline()
+        # Run full pipeline
+        results = orchestrator.run_full_pipeline()
         
         # Update job with results
         jobs[job_id]["status"] = "completed" if results.get("success") else "failed"
@@ -168,7 +164,6 @@ async def trigger_scrape(request: TriggerRequest, background_tasks: BackgroundTa
         jobs[job_id] = {
             "job_id": job_id,
             "status": "pending",
-            "mode": request.mode,
             "webhook_url": request.webhook_url,
             "created_at": datetime.now().isoformat(),
             "started_at": None,
@@ -181,7 +176,6 @@ async def trigger_scrape(request: TriggerRequest, background_tasks: BackgroundTa
         background_tasks.add_task(
             run_pipeline_sync,
             job_id,
-            request.mode,
             request.webhook_url
         )
         
@@ -190,7 +184,7 @@ async def trigger_scrape(request: TriggerRequest, background_tasks: BackgroundTa
         return TriggerResponse(
             job_id=job_id,
             status="started",
-            message=f"Pipeline execution started successfully (mode: {request.mode})",
+            message="Pipeline execution started successfully",
             timestamp=jobs[job_id]["created_at"]
         )
         

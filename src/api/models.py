@@ -11,10 +11,6 @@ class TriggerRequest(BaseModel):
         None,
         description="Optional webhook URL to call when pipeline completes"
     )
-    mode: Optional[str] = Field(
-        "full",
-        description="Pipeline mode: 'full' or 'incremental'"
-    )
     
 
 class TriggerResponse(BaseModel):

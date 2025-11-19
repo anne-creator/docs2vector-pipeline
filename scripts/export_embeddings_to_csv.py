@@ -80,7 +80,7 @@ def main():
     parser.add_argument(
         "--output",
         type=Path,
-        default=Settings.CSV_OUTPUT_DIR,
+        default=Settings.DATA_DIR / "csv_export",
         help="Output directory for CSV files (default: data/csv_export/)"
     )
     parser.add_argument(
